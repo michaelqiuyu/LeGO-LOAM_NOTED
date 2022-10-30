@@ -1,0 +1,57 @@
+1 编译运行
+	1.1 编译安装gtsam：
+		1.1.1 wget -O gtsam.zip https://github.com/borglab/gtsam/archive/4.0.0-alpha2.zip
+		1.1.2 解压
+		1.1.3 mkdir build && cd build
+		1.1.4 cmake ..  
+		1.1.5 sudo make install
+	1.2 mkdir -p catkin_ws/src  && cd catkin_ws/src  && git clone https://github.com/RobustFieldAutonomyLab/LeGO-LOAM.git
+	1.3 cd ..  &&  catkin_make -j1；第一次的时候一定要加上-j1
+	1.4 source devel/setup.bash  && roslaunch lego_loam run.launch
+	1.5 rosbag play *.bag --clock --topic /velodyne_points /imu/data
+
+2. 地面提取：
+	2.1 根据激光的水平和垂直分辨率获取一张range image
+	2.2 逐列计算，对按列连续的两个点，计算俯仰角，小于10度就认为两个点都是地面点；这个实际上并不准确，首先，这里计算的是平面而不一定是地面，其次，这个算法并不鲁棒，而且过于简单了
+
+3. 基于BFS的点云聚类和外点剔除
+	3.1 使用双指针模拟队列：start_index和end_index，当pop的时候，start_index++，当push的时候end_index++
+	3.2 在range_image上进行判断，待选的邻近点是上下左右四个点
+	3.3 由于水平方向的分辨率为0.2，垂直方向的分辨率为2，因此直接使用距离来判断近点不一定合适，因为水平方向上天然的就会更加接近；因此按照激光到两个点的两条边，然后构成三角形，然后按照底面的角度进行判断（在代码里面使用的是60度）
+	3.4 如果某一类超过30个点，那个这是一个合理的类；否则，如果其超过了5个点，并且横跨了至少3个线束，那么也认为是一个合理的类；其他的聚类结果认为是outlier
+
+4. 两部优化的帧间里程计
+	4.1 利用地面点优化pitch、roll和z，地面点的约束对于yaw、x和y是不可观的，因此不优化
+	4.2 利用角点优化yaw、x和y：多线激光雷达提取的角点通常是垂直的边缘特征，因此，这些特征对于x、y和yaw有着比较好的能观性，因此能够比较好的优化这三个状态量
+
+
+
+
+
+
+
+后续计划：
+	1. 地面点提取：Fast Segmentation of 3D Point Clouds for Ground Vehicles
+	2. 点云分割：Fast Range Image-Based Segmentation of Sparse 3D Laser Scans for Online Operation
+	3. 基于地面的优化
+
+
+当前的疑点：
+	1. 线点和面点的阈值是如何得到的，是纯经验的还是有理论支撑的
+	2. nFe1 / nFe2 = 20, nFp1 / nFp2 = 20, 这个对应关系是如何得到的；也就是说按照分割为6个子图的规则，应该是等于6才对
+	3. 关注如何剔除草地和树叶的
+
+
+
+核心：
+	1. 通过提取地面和点云聚类来删除不可信的特征点，从而避免了许多不精确的约束，提升了地图的精度，并降低了计算量
+
+
+论文：
+	1. 分离地面、低计算需求、轻量的、有回环、部署到嵌入式、精度接近LOAM
+	2. 两部优化；地面的面点计算roll、pitch和z；其他线点计算yaw、x、y，第一步也可以优化这三个量，但是是不准确的
+	3. 可变地形上的运动不再是一个连续运动，帧间的关联也变的复杂，因为剧烈的运动导致的有限的重叠
+	4. 草和树叶都是不稳定的特征点，但是如果按照LOAM的方式会被很容易提取到
+	5. 分离地平面→点云分割→删除不稳定的特征→激光里程计→激光建图
+	6. 相比于LOAM的激光建图，LEGO-LOAM仅仅只是保存地图的方式不一样，有两种保存方式：保存距离当前帧最近的100米内的点云、保存前面k帧的地面点和线点，后面一种方式可以用于寻找回环，注意看是如何获取回环的
+
